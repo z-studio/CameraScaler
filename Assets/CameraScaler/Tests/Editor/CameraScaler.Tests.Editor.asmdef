@@ -1,6 +1,6 @@
 {
-    "name": "CameraScaler.Tests",
-    "rootNamespace": "CameraScaler.Tests",
+    "name": "CameraScaler.Tests.Editor",
+    "rootNamespace": "ZStudio",
     "references": [
         "CameraScaler",
         "UnityEngine.TestRunner",
@@ -22,4 +22,3 @@
     "versionDefines": [],
     "noEngineReferences": false
 }
-

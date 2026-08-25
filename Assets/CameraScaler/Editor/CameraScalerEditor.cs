@@ -2,7 +2,7 @@
 using UnityEngine;
 
 namespace ZStudio.CameraScaler.Editor {
-    [CustomEditor(typeof(ZStudio.CameraScaler.CameraScaler))]
+    [CustomEditor(typeof(CameraScaler))]
     [CanEditMultipleObjects]
     public sealed class CameraScalerEditor : UnityEditor.Editor {
         private SerializedProperty m_ReferenceResolution;
@@ -32,16 +32,16 @@ namespace ZStudio.CameraScaler.Editor {
             EditorGUILayout.PropertyField(m_Mode);
 
             if (!m_Mode.hasMultipleDifferentValues) {
-                ZStudio.CameraScaler.CameraScaler.EWorkingMode workingMode = (ZStudio.CameraScaler.CameraScaler.EWorkingMode)m_Mode.enumValueIndex;
+                CameraScaler.EWorkingMode workingMode = (CameraScaler.EWorkingMode)m_Mode.enumValueIndex;
 
                 switch (workingMode) {
-                    case ZStudio.CameraScaler.CameraScaler.EWorkingMode.ConstantHeight: {
+                    case CameraScaler.EWorkingMode.ConstantHeight: {
                         const string msg = "保持相机的垂直可视范围；CameraZoom 仍然有效。";
                         EditorGUILayout.HelpBox(msg, MessageType.Info);
                         break;
                     }
 
-                    case ZStudio.CameraScaler.CameraScaler.EWorkingMode.MatchWidthOrHeight: {
+                    case CameraScaler.EWorkingMode.MatchWidthOrHeight: {
                         Rect r = EditorGUILayout.GetControlRect(true, EditorGUIUtility.singleLineHeight + 12);
                         DualLabeledSlider(r, m_MatchWidthOrHeight, "Match", "Width", "Height");
                         break;

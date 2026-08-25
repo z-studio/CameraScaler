@@ -2,14 +2,13 @@ using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
-using Scaler = ZStudio.CameraScaler.CameraScaler;
 
-namespace CameraScaler.Tests {
+namespace ZStudio.CameraScaler.Tests.Editor {
     [TestFixture]
     public sealed class CameraScalerTests {
         private GameObject m_GameObject;
         private Camera m_Camera;
-        private Scaler m_Scaler;
+        private CameraScaler m_Scaler;
 
         [TearDown]
         public void TearDown() {
@@ -20,7 +19,7 @@ namespace CameraScaler.Tests {
         public void ConstantWidth_Orthographic_KeepsReferenceHorizontalSize() {
             CreateScaler(true, 4f / 3f, 5f, 60f);
             m_Scaler.ReferenceResolution = new Vector2(1600f, 900f);
-            m_Scaler.WorkingMode = Scaler.EWorkingMode.ConstantWidth;
+            m_Scaler.WorkingMode = CameraScaler.EWorkingMode.ConstantWidth;
 
             m_Scaler.Refresh();
 
@@ -32,7 +31,7 @@ namespace CameraScaler.Tests {
         public void CameraZoom_Perspective_UsesProjectionScaleInsteadOfDividingDegrees() {
             CreateScaler(false, 16f / 9f, 5f, 60f);
             m_Scaler.ReferenceResolution = new Vector2(1600f, 900f);
-            m_Scaler.WorkingMode = Scaler.EWorkingMode.ConstantHeight;
+            m_Scaler.WorkingMode = CameraScaler.EWorkingMode.ConstantHeight;
             m_Scaler.CameraZoom = 2f;
 
             m_Scaler.Refresh();
@@ -46,7 +45,7 @@ namespace CameraScaler.Tests {
         public void MatchWidthOrHeight_Perspective_InterpolatesProjectionScale() {
             CreateScaler(false, 9f / 16f, 5f, 60f);
             m_Scaler.ReferenceResolution = new Vector2(1600f, 900f);
-            m_Scaler.WorkingMode = Scaler.EWorkingMode.MatchWidthOrHeight;
+            m_Scaler.WorkingMode = CameraScaler.EWorkingMode.MatchWidthOrHeight;
             m_Scaler.MatchWidthOrHeight = 0.5f;
 
             m_Scaler.Refresh();
@@ -63,7 +62,7 @@ namespace CameraScaler.Tests {
         public void RuntimeConfigurationChange_RefreshesInitializedCameraImmediately() {
             CreateScaler(true, 1f, 5f, 60f);
             m_Scaler.ReferenceResolution = new Vector2(1f, 1f);
-            m_Scaler.WorkingMode = Scaler.EWorkingMode.ConstantWidth;
+            m_Scaler.WorkingMode = CameraScaler.EWorkingMode.ConstantWidth;
             m_Scaler.Refresh();
 
             m_Scaler.ReferenceResolution = new Vector2(2f, 1f);
@@ -102,7 +101,7 @@ namespace CameraScaler.Tests {
             m_Camera.aspect = aspect;
             m_Camera.orthographicSize = size;
             m_Camera.fieldOfView = fov;
-            m_Scaler = m_GameObject.AddComponent<Scaler>();
+            m_Scaler = m_GameObject.AddComponent<CameraScaler>();
         }
 
         private static float FovToProjectionScale(float fov) {
