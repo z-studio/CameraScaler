@@ -10,7 +10,7 @@ namespace ZStudio.CameraScaler {
     /// 运行期间应通过 <see cref="CameraZoom"/> 缩放，不要直接修改 Camera 的 Size/FOV。
     /// 所有公开 API 都必须在 Unity 主线程调用。
     /// </remarks>
-    [AddComponentMenu("Layout/Camera Scaler")]
+    [AddComponentMenu("Layout/ZStudio/Camera Scaler")]
     [RequireComponent(typeof(Camera))]
     [DisallowMultipleComponent]
     [DefaultExecutionOrder(-100)]

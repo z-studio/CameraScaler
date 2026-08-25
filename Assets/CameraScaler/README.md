@@ -2,11 +2,34 @@
 
 Camera Scaler 用于让 Unity 相机像 `CanvasScaler` 一样，根据参考分辨率和实际屏幕宽高比调整可视范围。它同时支持正交相机和透视相机，可用于横竖屏适配、异形比例设备以及需要固定水平视野的游戏。
 
-本目录基于 Emerald Powder 的 [Camera Scaler](https://assetstore.unity.com/packages/tools/camera/camera-scaler-228305) 进行了健壮性和数学修正。使用时仍应遵守所取得资源对应的 Unity Asset Store 许可。
+## 安装
+
+1. 从 `Window > Package Manager` 打开 `Package Manager`
+2. 选择 `+ > Add package from git URL...`
+3. 输入以下命令进行安装
+    * https://github.com/z-studio/CameraScaler.git?path=Assets/CameraScaler
+
+<p align="center">
+  <img width="80%" src="https://user-images.githubusercontent.com/47441314/118421190-97842b00-b6fb-11eb-9f94-4dc94e82367a.png" alt="Package Manager">
+</p>
+
+或者，打开 `Packages/manifest.json` 文件，并将以下内容添加到 dependencies 块中：
+
+```json
+{
+    "dependencies": {
+        "com.zstudio.camera-scaler": "https://github.com/z-studio/CameraScaler.git?path=Assets/CameraScaler"
+    }
+}
+```
+
+如果要设置目标版本，请按如下方式指定：
+
+* https://github.com/z-studio/CameraScaler.git?path=Assets/CameraScaler#v1.0.0
 
 ## 快速开始
 
-1. 在带有 `Camera` 的 GameObject 上添加 `Layout/Camera Scaler`。
+1. 在带有 `Camera` 的 GameObject 上添加 `Layout/ZStudio/Camera Scaler`。
 2. 将 `Reference Resolution` 设置为设计内容时使用的分辨率，例如 `1080 × 1920`。
 3. 确认 `Reference Orthographic Size` / `Reference Field Of View` 等于你在参考分辨率下的设计值。添加组件时会从 Camera 自动采集；之后请改组件上的基准，而不是只改 Camera。
 4. 根据游戏的画面策略选择 `Scale Mode`。
