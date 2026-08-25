@@ -8,10 +8,11 @@ Camera Scaler 用于让 Unity 相机像 `CanvasScaler` 一样，根据参考分�
 
 1. 在带有 `Camera` 的 GameObject 上添加 `Layout/Camera Scaler`。
 2. 将 `Reference Resolution` 设置为设计内容时使用的分辨率，例如 `1080 × 1920`。
-3. 根据游戏的画面策略选择 `Mode`。
-4. 进入 Play Mode，切换 Game View 的宽高比检查画面边界。
+3. 确认 `Reference Orthographic Size` / `Reference Field Of View` 等于你在参考分辨率下的设计值。添加组件时会从 Camera 自动采集；之后请改组件上的基准，而不是只改 Camera。
+4. 根据游戏的画面策略选择 `Mode`。
+5. 进入 Play Mode，切换 Game View 的宽高比检查画面边界。
 
-组件会在 `Awake` 中记录相机原始的 `Orthographic Size` 和 `Field Of View`，并在其他组件的 `Start` 执行前完成首次适配。后续适配始终以这组初始值为基准，不会产生逐帧累积误差。
+组件把设计基准保存在自身序列化字段中，而不是在 `Awake` 里偷偷记住 Camera 的瞬时值。Play Mode 下首次适配在 `OnEnable` 完成，因此其他组件可在 `Start` 中读取适配后的相机。后续适配始终以这组基准值为输入，不会产生逐帧累积误差。Edit Mode 不会把适配结果写回 Camera，以免把设计 Size/FOV 存进场景。
 
 ## 五种适配模式
 
@@ -29,10 +30,10 @@ Camera Scaler 用于让 Unity 相机像 `CanvasScaler` 一样，根据参考分�
 
 ```csharp
 using UnityEngine;
-using CameraScalerComponent = CameraScaler.CameraScaler;
+using ZStudio.CameraScaler;
 
 public sealed class CameraController : MonoBehaviour {
-    [SerializeField] private CameraScalerComponent m_Scaler;
+    [SerializeField] private CameraScaler m_Scaler;
 
     private void Start() {
         // 2 倍放大。正交相机会将 Size 缩小一半；
@@ -41,8 +42,9 @@ public sealed class CameraController : MonoBehaviour {
 
         // 运行时修改适配配置会立即刷新相机。
         m_Scaler.ReferenceResolution = new Vector2(1080f, 1920f);
-        m_Scaler.WorkingMode = CameraScalerComponent.EWorkingMode.Expand;
+        m_Scaler.WorkingMode = ScaleMode.Expand;
         m_Scaler.MatchWidthOrHeight = 0.5f;
+        m_Scaler.ApplyTiming = ApplyTiming.OnPreCull;
     }
 }
 ```
@@ -50,12 +52,18 @@ public sealed class CameraController : MonoBehaviour {
 可用成员：
 
 - `ReferenceResolution`：当前参考分辨率；宽高非法时会被修正为 `1`。
-- `WorkingMode`：当前适配模式。
+- `WorkingMode`：当前适配模式，类型为 `ScaleMode`。
 - `MatchWidthOrHeight`：宽高匹配权重，自动限制在 `0～1`。
-- `CameraZoom`：缩放倍率，必须是大于 `0` 的有限值；非法输入会被拒绝。
+- `ReferenceOrthographicSize`：参考分辨率下的正交垂直半尺寸。
+- `ReferenceFieldOfView`：参考分辨率下的透视垂直视野角。
+- `CameraZoom`：缩放倍率，必须是大于 `0` 的有限值；非法输入会被拒绝。可在 Inspector 中序列化。
+- `ApplyTiming`：将结果写入 Camera 的时机（`Update` / `LateUpdate` / `OnPreCull`）。
 - `HorizontalSize`：参考分辨率下、未应用 Zoom 的正交水平半尺寸。
 - `HorizontalFov`：参考分辨率下、未应用 Zoom 的水平视野角。
-- `Refresh()`：外部直接修改 Camera 配置后，强制重新应用适配。
+- `Refresh()`：外部直接修改 Camera 配置后，强制重新应用适配。不会重新采集基准。
+- `RecaptureBaseline()`：把 Camera 当前的 Size/FOV 采集为新基准。Play Mode 下会立即重新应用适配。
+
+纯计算逻辑在 `CameraScalerMath` 中，不依赖组件生命周期，便于测试或给其他相机系统复用。
 
 ## Zoom 的正确用法
 
@@ -66,15 +74,19 @@ Camera Scaler 会接管以下属性：
 
 运行时不要直接修改它们来实现缩放，应修改 `CameraZoom`。透视相机的角度不是线性尺度，因此组件会按照 `tan(FOV / 2)` 所表示的投影平面尺度计算 Zoom；这比直接执行 `FOV / Zoom` 更准确。
 
-如果其他系统必须直接修改相机参数，应先明确新的基准值需求。`Refresh()` 只会重新应用最初缓存的 Size/FOV，不会把当前适配结果重新定义为基准。
+如果其他系统必须直接修改相机参数，应先明确新的基准值需求：
+
+- 只想按当前宽高比重新套用已有基准：调用 `Refresh()`。
+- 想把 Camera 上刚设好的 Size/FOV 当作新的设计值：调用 `RecaptureBaseline()`。
 
 ## 生命周期和动态变化
 
-- 首次适配在 `Awake` 完成，因此其他组件可在 `Start` 中读取适配后的相机。
-- 屏幕宽高比、工作模式、Match 权重、参考分辨率以及正交/透视切换都会自动触发刷新。
-- 在 Camera Scaler 自身 `Awake` 之前设置公开属性是安全的；配置会在初始化时应用。
+- Play Mode 下首次适配在 `OnEnable` 完成，因此其他组件可在 `Start` 中读取适配后的相机。Edit Mode 只保存基准，不改 Camera。
+- 屏幕宽高比、工作模式、Match 权重、参考分辨率、参考 Size/FOV、Zoom 以及正交/透视切换都会自动触发刷新。
+- 在 Camera Scaler 自身初始化之前设置公开属性是安全的；配置会在启用时应用。
 - Unity 对象不是线程安全的，所有 API 必须在主线程调用。
 - 禁用组件期间修改 Camera 后，重新启用组件会重新应用适配。
+- 同一物体不能挂多个 Camera Scaler。
 
 ## 参数保护
 
@@ -87,7 +99,8 @@ Camera Scaler 会接管以下属性：
 ## 与其他相机系统配合
 
 - Built-in、URP 和 HDRP 均使用 Unity `Camera` 的 Size/FOV，因此适配算法本身不依赖渲染管线。
-- Cinemachine 或自定义相机控制器也可能在每帧写入 Size/FOV。应当只保留一个最终写入者，或者在这些系统完成更新后统一设置 `CameraZoom`/调用 `Refresh()`。
+- Cinemachine 或自定义相机控制器也可能在每帧写入 Size/FOV。应当只保留一个最终写入者。若这些系统在 `LateUpdate` 或渲染前才定稿，把 `Apply Timing` 改为 `Late Update` 或 `On Pre Cull`。
+- 启用 Physical Camera 时，FOV 与焦距/传感器尺寸互相派生。建议关闭 Physical Camera，或确保没有其他系统同时写入这些属性。
 - 多相机项目应在每个需要独立适配的 Camera 上分别添加组件并配置参考分辨率。
 
 ## 上线前检查

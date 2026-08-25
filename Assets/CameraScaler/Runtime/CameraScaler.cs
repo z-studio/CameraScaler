@@ -5,60 +5,84 @@ namespace ZStudio.CameraScaler {
     /// 根据参考分辨率和当前相机宽高比，自动调整正交相机的 Size 或透视相机的垂直 FOV。
     /// </summary>
     /// <remarks>
-    /// 组件会在 Awake 中记录相机的初始 Size/FOV，并在其他组件的 Start 执行前完成首次适配。
+    /// 设计基准是组件上的参考 Size/FOV，而不是 Camera 在 Awake 时的瞬时值。
+    /// Play Mode 下会在 OnEnable 中完成首次适配，因此其他组件可在 Start 中读取结果。
     /// 运行期间应通过 <see cref="CameraZoom"/> 缩放，不要直接修改 Camera 的 Size/FOV。
     /// 所有公开 API 都必须在 Unity 主线程调用。
     /// </remarks>
     [AddComponentMenu("Layout/Camera Scaler")]
     [RequireComponent(typeof(Camera))]
-    public class CameraScaler : MonoBehaviour {
-        private const float k_DefaultReferenceWidth = 720f;
-        private const float k_DefaultReferenceHeight = 1280f;
-        private const float k_DefaultOrthographicSize = 5f;
-        private const float k_DefaultFieldOfView = 60f;
-        private const float k_MinimumFieldOfView = 1f;
-        private const float k_MaximumFieldOfView = 179f;
-        private const float k_MinimumAspect = 0.01f;
-        private const float k_MaximumAspect = 100f;
+    [DisallowMultipleComponent]
+    [DefaultExecutionOrder(-100)]
+    public sealed class CameraScaler : MonoBehaviour {
+        private const int k_CurrentSerializedVersion = 1;
 
         /// <summary>设计和调试游戏内容时使用的参考分辨率。</summary>
         [Tooltip("设计内容时使用的参考分辨率，宽和高必须大于 0。")]
         [SerializeField]
-        private Vector2 m_ReferenceResolution = new(k_DefaultReferenceWidth, k_DefaultReferenceHeight);
+        private Vector2 m_ReferenceResolution = new(
+            CameraScalerMath.DefaultReferenceWidth,
+            CameraScalerMath.DefaultReferenceHeight
+        );
 
         /// <summary>屏幕宽高比变化时采用的相机适配策略。</summary>
+        [Tooltip("屏幕宽高比变化时采用的相机适配策略。")]
         [SerializeField]
-        private EWorkingMode m_Mode = EWorkingMode.ConstantWidth;
+        private EScaleMode m_ScaleMode = EScaleMode.ConstantWidth;
 
         /// <summary>宽度匹配和高度匹配之间的插值权重：0 为宽度，1 为高度。</summary>
+        [Tooltip("宽度匹配和高度匹配之间的插值权重：0 为宽度，1 为高度。")]
         [Range(0f, 1f)]
         [SerializeField]
         private float m_MatchWidthOrHeight = 0.5f;
 
-        // 初始相机参数只缓存一次，避免适配结果被再次当作基准而产生累积误差。
+        /// <summary>参考分辨率下的正交相机垂直半尺寸。</summary>
+        [Tooltip("参考分辨率下的正交相机垂直半尺寸。运行时以此为基准，而不是 Camera 上的当前 Size。")]
+        [SerializeField]
+        private float m_ReferenceOrthographicSize = CameraScalerMath.DefaultOrthographicSize;
+
+        /// <summary>参考分辨率下的透视相机垂直视野角。</summary>
+        [Tooltip("参考分辨率下的透视相机垂直视野角。运行时以此为基准，而不是 Camera 上的当前 FOV。")]
+        [Range(1f, 179f)]
+        [SerializeField]
+        private float m_ReferenceFieldOfView = CameraScalerMath.DefaultFieldOfView;
+
+        /// <summary>相对于基准投影视野的缩放倍率。</summary>
+        [Tooltip("相对于基准投影视野的缩放倍率。1 表示原始视野，大于 1 表示放大。")]
+        [Min(0.0001f)]
+        [SerializeField]
+        private float m_CameraZoom = 1f;
+
+        /// <summary>将适配结果写入 Camera 的时机。</summary>
+        [Tooltip("将适配结果写入 Camera 的时机。与 Cinemachine 等系统冲突时，可改为 Late Update 或 On Pre Cull。")]
+        [SerializeField]
+        private EApplyTiming m_ApplyTiming = EApplyTiming.Update;
+
+        [SerializeField, HideInInspector]
+        private int m_SerializedVersion;
+
         private Camera m_ComponentCamera;
         private float m_TargetAspect;
-        private float m_CameraZoom = 1f;
-        private float m_InitialSize;
-        private float m_InitialFov;
         private float m_HorizontalFov;
         private bool m_IsInitialized;
         private bool m_HasApplied;
 
-        // 上一次完成适配时的全部输入，用于避免每帧重复计算。
         private float m_PreviousUpdateAspect;
-        private EWorkingMode m_PreviousUpdateMode;
+        private EScaleMode m_PreviousUpdateMode;
         private float m_PreviousUpdateMatch;
         private Vector2 m_PreviousReferenceResolution;
+        private float m_PreviousReferenceSize;
+        private float m_PreviousReferenceFov;
+        private float m_PreviousCameraZoom;
         private bool m_PreviousOrthographic;
 
         /// <summary>当前参考分辨率。非法分量会被修正为 1。</summary>
         public Vector2 ReferenceResolution {
             get => m_ReferenceResolution;
             set {
-                Vector2 sanitized = SanitizeReferenceResolution(value);
+                Vector2 sanitized = CameraScalerMath.SanitizeReferenceResolution(value);
 
-                if (Approximately(m_ReferenceResolution, sanitized)) {
+                if (CameraScalerMath.Approximately(m_ReferenceResolution, sanitized)) {
                     return;
                 }
 
@@ -68,19 +92,19 @@ namespace ZStudio.CameraScaler {
         }
 
         /// <summary>当前相机适配策略。</summary>
-        public EWorkingMode WorkingMode {
-            get => m_Mode;
+        public EScaleMode ScaleMode {
+            get => m_ScaleMode;
             set {
-                if (!IsValidMode(value)) {
+                if (!CameraScalerMath.IsValidScaleMode(value)) {
                     Debug.LogError($"无效的 CameraScaler 工作模式：{value}。", this);
                     return;
                 }
 
-                if (m_Mode == value) {
+                if (m_ScaleMode == value) {
                     return;
                 }
 
-                m_Mode = value;
+                m_ScaleMode = value;
                 RefreshIfInitialized();
             }
         }
@@ -89,7 +113,7 @@ namespace ZStudio.CameraScaler {
         public float MatchWidthOrHeight {
             get => m_MatchWidthOrHeight;
             set {
-                float sanitized = SanitizeMatch(value);
+                float sanitized = CameraScalerMath.SanitizeMatch(value);
 
                 if (Mathf.Approximately(m_MatchWidthOrHeight, sanitized)) {
                     return;
@@ -100,11 +124,43 @@ namespace ZStudio.CameraScaler {
             }
         }
 
+        /// <summary>参考分辨率下的正交相机垂直半尺寸。非法值会被修正为 5。</summary>
+        public float ReferenceOrthographicSize {
+            get => m_ReferenceOrthographicSize;
+            set {
+                float sanitized = CameraScalerMath.SanitizeOrthographicSize(value);
+
+                if (Mathf.Approximately(m_ReferenceOrthographicSize, sanitized)) {
+                    return;
+                }
+
+                m_ReferenceOrthographicSize = sanitized;
+                MarkBaselineSerialized();
+                RefreshIfInitialized();
+            }
+        }
+
+        /// <summary>参考分辨率下的透视相机垂直视野角。非法值会被限制到 1～179。</summary>
+        public float ReferenceFieldOfView {
+            get => m_ReferenceFieldOfView;
+            set {
+                float sanitized = CameraScalerMath.SanitizeFieldOfView(value);
+
+                if (Mathf.Approximately(m_ReferenceFieldOfView, sanitized)) {
+                    return;
+                }
+
+                m_ReferenceFieldOfView = sanitized;
+                MarkBaselineSerialized();
+                RefreshIfInitialized();
+            }
+        }
+
         /// <summary>参考分辨率下、未应用 <see cref="CameraZoom"/> 时的正交相机水平半尺寸。</summary>
         public float HorizontalSize {
             get {
                 EnsureInitialized();
-                return m_InitialSize * m_TargetAspect;
+                return m_ReferenceOrthographicSize * m_TargetAspect;
             }
         }
 
@@ -125,7 +181,7 @@ namespace ZStudio.CameraScaler {
         public float CameraZoom {
             get => m_CameraZoom;
             set {
-                if (!IsFinitePositive(value)) {
+                if (!CameraScalerMath.IsFinitePositive(value)) {
                     Debug.LogError($"CameraZoom 必须是大于 0 的有限值，当前输入：{value}。", this);
                     return;
                 }
@@ -139,42 +195,61 @@ namespace ZStudio.CameraScaler {
             }
         }
 
-        /// <summary>屏幕宽高比变化时可采用的适配策略。</summary>
-        public enum EWorkingMode {
-            /// <summary>保持参考分辨率下的垂直可视范围。</summary>
-            ConstantHeight,
+        /// <summary>将适配结果写入 Camera 的时机。</summary>
+        public EApplyTiming ApplyTiming {
+            get => m_ApplyTiming;
+            set {
+                if (!CameraScalerMath.IsValidApplyTiming(value)) {
+                    Debug.LogError($"无效的 CameraScaler 写入时机：{value}。", this);
+                    return;
+                }
 
-            /// <summary>保持参考分辨率下的水平可视范围。</summary>
-            ConstantWidth,
+                if (m_ApplyTiming == value) {
+                    return;
+                }
 
-            /// <summary>在保持宽度和保持高度之间按权重插值。</summary>
-            MatchWidthOrHeight,
-
-            /// <summary>确保参考分辨率内的区域始终可见，必要时扩展额外可视区域。</summary>
-            Expand,
-
-            /// <summary>避免显示参考分辨率之外的区域，必要时裁减可视区域。</summary>
-            Shrink
+                m_ApplyTiming = value;
+                RefreshIfInitialized();
+            }
         }
 
-        /// <summary>缓存初始相机参数，并在其他组件的 Start 之前完成首次适配。</summary>
+        /// <summary>缓存参考数据，首次适配改由 OnEnable 完成，避免与 OnEnable 重复写入。</summary>
         private void Awake() {
             EnsureInitialized();
-            RefreshCamera(true);
         }
 
-        /// <summary>组件重新启用后检查期间发生的相机状态变化。</summary>
+        /// <summary>Play Mode 下启用后立即应用适配，供其他脚本在 Start 中读取。</summary>
         private void OnEnable() {
             EnsureInitialized();
-            RefreshCamera(true);
+
+            if (Application.isPlaying) {
+                RefreshCamera(true);
+            }
         }
 
         /// <summary>仅在影响适配结果的输入发生变化时重新计算相机参数。</summary>
-        private void Update() => RefreshCamera(false);
+        private void Update() {
+            if (m_ApplyTiming == EApplyTiming.Update) {
+                RefreshCamera(false);
+            }
+        }
+
+        private void LateUpdate() {
+            if (m_ApplyTiming == EApplyTiming.LateUpdate) {
+                RefreshCamera(false);
+            }
+        }
+
+        private void OnPreCull() {
+            if (m_ApplyTiming == EApplyTiming.OnPreCull) {
+                RefreshCamera(false);
+            }
+        }
 
         /// <summary>在 Inspector 修改数据时立即修正非法序列化值。</summary>
         private void OnValidate() {
             SanitizeSerializedFields();
+            TryMigrateBaselineFromCamera();
 
             if (Application.isPlaying && isActiveAndEnabled) {
                 EnsureInitialized();
@@ -182,13 +257,39 @@ namespace ZStudio.CameraScaler {
             }
         }
 
+        private void Reset() {
+            m_ComponentCamera = GetComponent<Camera>();
+            CopyBaselineFromCamera();
+        }
+
         /// <summary>
         /// 立即按照相机的当前宽高比和投影类型重新应用适配。
         /// 外部代码直接修改 Camera 配置后可主动调用此方法。
+        /// 此方法不会把 Camera 的当前 Size/FOV 重新定义为基准，需要更新基准时请调用 <see cref="RecaptureBaseline"/>。
         /// </summary>
         public void Refresh() {
             EnsureInitialized();
             RefreshCamera(true);
+        }
+
+        /// <summary>
+        /// 把 Camera 当前的 Size/FOV 采集为新的设计基准。
+        /// 应在 Camera 已经处于「参考分辨率下的目标观感」时调用。
+        /// Play Mode 下采集后会立即重新应用适配；Edit Mode 只更新基准字段。
+        /// </summary>
+        public void RecaptureBaseline() {
+            if (m_ComponentCamera == null) {
+                m_ComponentCamera = GetComponent<Camera>();
+            }
+
+            CopyBaselineFromCamera();
+            SanitizeSerializedFields();
+            UpdateReferenceData();
+            m_IsInitialized = true;
+
+            if (Application.isPlaying && isActiveAndEnabled) {
+                RefreshCamera(true);
+            }
         }
 
         private void EnsureInitialized() {
@@ -198,12 +299,7 @@ namespace ZStudio.CameraScaler {
 
             SanitizeSerializedFields();
             m_ComponentCamera = GetComponent<Camera>();
-
-            m_InitialSize = IsFinitePositive(m_ComponentCamera.orthographicSize)
-                ? m_ComponentCamera.orthographicSize
-                : k_DefaultOrthographicSize;
-
-            m_InitialFov = SanitizeFieldOfView(m_ComponentCamera.fieldOfView);
+            TryMigrateBaselineFromCamera();
             UpdateReferenceData();
             m_IsInitialized = true;
         }
@@ -215,194 +311,109 @@ namespace ZStudio.CameraScaler {
         }
 
         private void RefreshCamera(bool force) {
-            if (!m_IsInitialized) {
+            if (!m_IsInitialized || m_ComponentCamera == null) {
                 return;
             }
 
             SanitizeSerializedFields();
-            float currentAspect = GetSafeAspect(m_ComponentCamera.aspect);
-            bool referenceChanged = !Approximately(m_PreviousReferenceResolution, m_ReferenceResolution);
+            float currentAspect = CameraScalerMath.GetSafeAspect(m_ComponentCamera.aspect, m_TargetAspect);
 
-            if (!force
-                && m_HasApplied
-                && !referenceChanged
-                && Mathf.Approximately(m_PreviousUpdateAspect, currentAspect)
-                && m_PreviousUpdateMode == m_Mode
-                && Mathf.Approximately(m_PreviousUpdateMatch, m_MatchWidthOrHeight)
-                && m_PreviousOrthographic == m_ComponentCamera.orthographic) {
+            bool baselineChanged =
+                !CameraScalerMath.Approximately(m_PreviousReferenceResolution, m_ReferenceResolution) ||
+                !Mathf.Approximately(m_PreviousReferenceSize, m_ReferenceOrthographicSize) ||
+                !Mathf.Approximately(m_PreviousReferenceFov, m_ReferenceFieldOfView);
+
+            if (!force &&
+                m_HasApplied &&
+                !baselineChanged &&
+                Mathf.Approximately(m_PreviousUpdateAspect, currentAspect) &&
+                m_PreviousUpdateMode == m_ScaleMode &&
+                Mathf.Approximately(m_PreviousUpdateMatch, m_MatchWidthOrHeight) &&
+                Mathf.Approximately(m_PreviousCameraZoom, m_CameraZoom) &&
+                m_PreviousOrthographic == m_ComponentCamera.orthographic) {
                 return;
             }
 
-            if (referenceChanged || !m_HasApplied) {
+            if (baselineChanged || !m_HasApplied) {
                 UpdateReferenceData();
             }
 
             if (m_ComponentCamera.orthographic) {
-                UpdateOrtho(currentAspect);
+                m_ComponentCamera.orthographicSize = CameraScalerMath.CalculateOrthographicSize(
+                    m_ReferenceOrthographicSize,
+                    m_TargetAspect,
+                    currentAspect,
+                    m_ScaleMode,
+                    m_MatchWidthOrHeight,
+                    m_CameraZoom
+                );
             } else {
-                UpdatePerspective(currentAspect);
+                m_ComponentCamera.fieldOfView = CameraScalerMath.CalculateFieldOfView(
+                    m_ReferenceFieldOfView,
+                    m_TargetAspect,
+                    currentAspect,
+                    m_ScaleMode,
+                    m_MatchWidthOrHeight,
+                    m_CameraZoom
+                );
             }
 
             m_PreviousUpdateAspect = currentAspect;
-            m_PreviousUpdateMode = m_Mode;
+            m_PreviousUpdateMode = m_ScaleMode;
             m_PreviousUpdateMatch = m_MatchWidthOrHeight;
             m_PreviousReferenceResolution = m_ReferenceResolution;
+            m_PreviousReferenceSize = m_ReferenceOrthographicSize;
+            m_PreviousReferenceFov = m_ReferenceFieldOfView;
+            m_PreviousCameraZoom = m_CameraZoom;
             m_PreviousOrthographic = m_ComponentCamera.orthographic;
             m_HasApplied = true;
         }
 
         private void UpdateReferenceData() {
-            m_TargetAspect = CalculateAspect(m_ReferenceResolution);
-            m_HorizontalFov = CalcHorizontalFov(m_InitialFov, m_TargetAspect);
-        }
-
-        /// <summary>更新正交相机的垂直半尺寸。</summary>
-        private void UpdateOrtho(float currentAspect) {
-            float constantHeightSize = m_InitialSize;
-            float constantWidthSize = m_InitialSize * (m_TargetAspect / currentAspect);
-            float result;
-
-            switch (m_Mode) {
-                case EWorkingMode.ConstantHeight:
-                    result = constantHeightSize;
-                    break;
-                case EWorkingMode.ConstantWidth:
-                    result = constantWidthSize;
-                    break;
-                case EWorkingMode.MatchWidthOrHeight:
-                    result = GeometricLerp(constantWidthSize, constantHeightSize, m_MatchWidthOrHeight);
-                    break;
-                case EWorkingMode.Expand:
-                    result = Mathf.Max(constantWidthSize, constantHeightSize);
-                    break;
-                case EWorkingMode.Shrink:
-                    result = Mathf.Min(constantWidthSize, constantHeightSize);
-                    break;
-                default:
-                    result = constantWidthSize;
-                    break;
-            }
-
-            m_ComponentCamera.orthographicSize = Mathf.Max(result / m_CameraZoom, Mathf.Epsilon);
-        }
-
-        /// <summary>更新透视相机的垂直视野角。</summary>
-        private void UpdatePerspective(float currentAspect) {
-            float constantHeightScale = FovToProjectionScale(m_InitialFov);
-            float constantWidthFov = CalcVerticalFov(m_HorizontalFov, currentAspect);
-            float constantWidthScale = FovToProjectionScale(constantWidthFov);
-            float resultScale;
-
-            switch (m_Mode) {
-                case EWorkingMode.ConstantHeight:
-                    resultScale = constantHeightScale;
-                    break;
-                case EWorkingMode.ConstantWidth:
-                    resultScale = constantWidthScale;
-                    break;
-                case EWorkingMode.MatchWidthOrHeight:
-                    // 对投影平面尺度做几何插值，才能与 CanvasScaler 的对数缩放语义一致。
-                    resultScale = GeometricLerp(
-                        constantWidthScale,
-                        constantHeightScale,
-                        m_MatchWidthOrHeight
-                    );
-
-                    break;
-                case EWorkingMode.Expand:
-                    resultScale = Mathf.Max(constantWidthScale, constantHeightScale);
-                    break;
-                case EWorkingMode.Shrink:
-                    resultScale = Mathf.Min(constantWidthScale, constantHeightScale);
-                    break;
-                default:
-                    resultScale = constantWidthScale;
-                    break;
-            }
-
-            // Zoom 作用于投影平面尺度，避免直接 FOV/Zoom 带来的非线性误差。
-            m_ComponentCamera.fieldOfView = ProjectionScaleToFov(resultScale / m_CameraZoom);
+            m_TargetAspect = CameraScalerMath.CalculateAspect(m_ReferenceResolution);
+            m_HorizontalFov = CameraScalerMath.CalcHorizontalFov(m_ReferenceFieldOfView, m_TargetAspect);
         }
 
         private void SanitizeSerializedFields() {
-            m_ReferenceResolution = SanitizeReferenceResolution(m_ReferenceResolution);
-            m_MatchWidthOrHeight = SanitizeMatch(m_MatchWidthOrHeight);
+            m_ReferenceResolution = CameraScalerMath.SanitizeReferenceResolution(m_ReferenceResolution);
+            m_MatchWidthOrHeight = CameraScalerMath.SanitizeMatch(m_MatchWidthOrHeight);
+            m_ReferenceOrthographicSize = CameraScalerMath.SanitizeOrthographicSize(m_ReferenceOrthographicSize);
+            m_ReferenceFieldOfView = CameraScalerMath.SanitizeFieldOfView(m_ReferenceFieldOfView);
+            m_CameraZoom = CameraScalerMath.SanitizeZoom(m_CameraZoom);
 
-            if (!IsValidMode(m_Mode)) {
-                m_Mode = EWorkingMode.ConstantWidth;
+            if (!CameraScalerMath.IsValidScaleMode(m_ScaleMode)) {
+                m_ScaleMode = EScaleMode.ConstantWidth;
+            }
+
+            if (!CameraScalerMath.IsValidApplyTiming(m_ApplyTiming)) {
+                m_ApplyTiming = EApplyTiming.Update;
             }
         }
 
-        private float GetSafeAspect(float aspect) {
-            return IsFinitePositive(aspect) ? Mathf.Clamp(aspect, k_MinimumAspect, k_MaximumAspect) : m_TargetAspect;
-        }
-
-        private static Vector2 SanitizeReferenceResolution(Vector2 resolution) {
-            return new Vector2(
-                SanitizeDimension(resolution.x),
-                SanitizeDimension(resolution.y)
-            );
-        }
-
-        private static float SanitizeDimension(float value) {
-            return IsFinitePositive(value) ? value : 1f;
-        }
-
-        private static float CalculateAspect(Vector2 resolution) {
-            double aspect = (double)resolution.x / resolution.y;
-
-            if (double.IsNaN(aspect) || double.IsInfinity(aspect) || aspect <= 0d) {
-                return k_DefaultReferenceWidth / k_DefaultReferenceHeight;
+        private void TryMigrateBaselineFromCamera() {
+            if (m_SerializedVersion >= k_CurrentSerializedVersion) {
+                return;
             }
 
-            return Mathf.Clamp((float)aspect, k_MinimumAspect, k_MaximumAspect);
+            if (m_ComponentCamera == null) {
+                m_ComponentCamera = GetComponent<Camera>();
+            }
+
+            CopyBaselineFromCamera();
         }
 
-        private static float SanitizeMatch(float value) {
-            return IsFinite(value) ? Mathf.Clamp01(value) : 0.5f;
+        private void CopyBaselineFromCamera() {
+            if (m_ComponentCamera == null) {
+                return;
+            }
+
+            m_ReferenceOrthographicSize = CameraScalerMath.SanitizeOrthographicSize(m_ComponentCamera.orthographicSize);
+            m_ReferenceFieldOfView = CameraScalerMath.SanitizeFieldOfView(m_ComponentCamera.fieldOfView);
+            MarkBaselineSerialized();
         }
 
-        private static float SanitizeFieldOfView(float value) {
-            return IsFinite(value) ? Mathf.Clamp(value, k_MinimumFieldOfView, k_MaximumFieldOfView) : k_DefaultFieldOfView;
-        }
-
-        private static bool IsValidMode(EWorkingMode mode) {
-            return mode >= EWorkingMode.ConstantHeight && mode <= EWorkingMode.Shrink;
-        }
-
-        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
-
-        private static bool IsFinitePositive(float value) => IsFinite(value) && value > 0f;
-
-        private static bool Approximately(Vector2 left, Vector2 right) {
-            return Mathf.Approximately(left.x, right.x) && Mathf.Approximately(left.y, right.y);
-        }
-
-        private static float GeometricLerp(float from, float to, float t) {
-            float fromLog = Mathf.Log(from, 2f);
-            float toLog = Mathf.Log(to, 2f);
-            return Mathf.Pow(2f, Mathf.Lerp(fromLog, toLog, t));
-        }
-
-        /// <summary>将水平视野角转换为指定宽高比下的垂直视野角。</summary>
-        private static float CalcVerticalFov(float horizontalFovInDegrees, float aspectRatio) {
-            float horizontalScale = FovToProjectionScale(horizontalFovInDegrees);
-            return ProjectionScaleToFov(horizontalScale / aspectRatio);
-        }
-
-        /// <summary>将垂直视野角转换为指定宽高比下的水平视野角。</summary>
-        private static float CalcHorizontalFov(float verticalFovInDegrees, float aspectRatio) {
-            float verticalScale = FovToProjectionScale(verticalFovInDegrees);
-            return ProjectionScaleToFov(verticalScale * aspectRatio);
-        }
-
-        private static float FovToProjectionScale(float fovInDegrees) {
-            return Mathf.Tan(fovInDegrees * Mathf.Deg2Rad * 0.5f);
-        }
-
-        private static float ProjectionScaleToFov(float projectionScale) {
-            float fov = 2f * Mathf.Atan(projectionScale) * Mathf.Rad2Deg;
-            return Mathf.Clamp(fov, k_MinimumFieldOfView, k_MaximumFieldOfView);
+        private void MarkBaselineSerialized() {
+            m_SerializedVersion = k_CurrentSerializedVersion;
         }
     }
 }

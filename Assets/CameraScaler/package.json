@@ -2,8 +2,15 @@
   "name": "com.zstudio.camera-scaler",
   "version": "1.0.0",
   "displayName": "Camera Scaler",
-  "description": "",
+  "description": "Adjusts orthographic size or perspective FOV from a reference resolution, similar to CanvasScaler.",
   "unity": "6000.0",
+  "keywords": [
+    "camera",
+    "scaler",
+    "aspect",
+    "fov",
+    "canvas"
+  ],
   "author": {
     "name": "Z Studio"
   }
