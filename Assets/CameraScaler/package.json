@@ -1,0 +1,10 @@
+{
+  "name": "com.zstudio.camera-scaler",
+  "version": "1.0.0",
+  "displayName": "Camera Scaler",
+  "description": "",
+  "unity": "6000.0",
+  "author": {
+    "name": "Z Studio"
+  }
+}
