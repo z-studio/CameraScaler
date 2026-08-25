@@ -9,7 +9,7 @@ Camera Scaler 用于让 Unity 相机像 `CanvasScaler` 一样，根据参考分�
 1. 在带有 `Camera` 的 GameObject 上添加 `Layout/Camera Scaler`。
 2. 将 `Reference Resolution` 设置为设计内容时使用的分辨率，例如 `1080 × 1920`。
 3. 确认 `Reference Orthographic Size` / `Reference Field Of View` 等于你在参考分辨率下的设计值。添加组件时会从 Camera 自动采集；之后请改组件上的基准，而不是只改 Camera。
-4. 根据游戏的画面策略选择 `Mode`。
+4. 根据游戏的画面策略选择 `Scale Mode`。
 5. 进入 Play Mode，切换 Game View 的宽高比检查画面边界。
 
 组件把设计基准保存在自身序列化字段中，而不是在 `Awake` 里偷偷记住 Camera 的瞬时值。Play Mode 下首次适配在 `OnEnable` 完成，因此其他组件可在 `Start` 中读取适配后的相机。后续适配始终以这组基准值为输入，不会产生逐帧累积误差。Edit Mode 不会把适配结果写回 Camera，以免把设计 Size/FOV 存进场景。
@@ -42,9 +42,9 @@ public sealed class CameraController : MonoBehaviour {
 
         // 运行时修改适配配置会立即刷新相机。
         m_Scaler.ReferenceResolution = new Vector2(1080f, 1920f);
-        m_Scaler.WorkingMode = ScaleMode.Expand;
+        m_Scaler.ScaleMode = EScaleMode.Expand;
         m_Scaler.MatchWidthOrHeight = 0.5f;
-        m_Scaler.ApplyTiming = ApplyTiming.OnPreCull;
+        m_Scaler.ApplyTiming = EApplyTiming.OnPreCull;
     }
 }
 ```
@@ -52,12 +52,12 @@ public sealed class CameraController : MonoBehaviour {
 可用成员：
 
 - `ReferenceResolution`：当前参考分辨率；宽高非法时会被修正为 `1`。
-- `WorkingMode`：当前适配模式，类型为 `ScaleMode`。
+- `ScaleMode`：当前适配模式，类型为 `EScaleMode`。
 - `MatchWidthOrHeight`：宽高匹配权重，自动限制在 `0～1`。
 - `ReferenceOrthographicSize`：参考分辨率下的正交垂直半尺寸。
 - `ReferenceFieldOfView`：参考分辨率下的透视垂直视野角。
 - `CameraZoom`：缩放倍率，必须是大于 `0` 的有限值；非法输入会被拒绝。可在 Inspector 中序列化。
-- `ApplyTiming`：将结果写入 Camera 的时机（`Update` / `LateUpdate` / `OnPreCull`）。
+- `ApplyTiming`：将结果写入 Camera 的时机（`EApplyTiming.Update` / `LateUpdate` / `OnPreCull`）。
 - `HorizontalSize`：参考分辨率下、未应用 Zoom 的正交水平半尺寸。
 - `HorizontalFov`：参考分辨率下、未应用 Zoom 的水平视野角。
 - `Refresh()`：外部直接修改 Camera 配置后，强制重新应用适配。不会重新采集基准。
