@@ -79,8 +79,8 @@ namespace ZStudio.CameraScaler.Tests.Editor {
                 0.0001f
             );
 
-            Assert.That(minFov, Is.EqualTo(CameraScalerMath.MinimumFieldOfView).Within(0.0001f));
-            Assert.That(maxFov, Is.EqualTo(CameraScalerMath.MaximumFieldOfView).Within(0.0001f));
+            Assert.That(minFov, Is.EqualTo(CameraScalerMath.kMinimumFieldOfView).Within(0.0001f));
+            Assert.That(maxFov, Is.EqualTo(CameraScalerMath.kMaximumFieldOfView).Within(0.0001f));
         }
 
         [Test]
@@ -108,7 +108,7 @@ namespace ZStudio.CameraScaler.Tests.Editor {
             Assert.That(
                 aspect,
                 Is.EqualTo(
-                    CameraScalerMath.DefaultReferenceWidth / CameraScalerMath.DefaultReferenceHeight
+                    CameraScalerMath.kDefaultReferenceWidth / CameraScalerMath.kDefaultReferenceHeight
                 ).Within(0.0001f)
             );
         }
@@ -120,6 +120,30 @@ namespace ZStudio.CameraScaler.Tests.Editor {
             );
 
             Assert.That(CameraScalerMath.CalcHorizontalFov(60f, 720f / 1280f), Is.EqualTo(expected).Within(0.0001f));
+        }
+
+        [TestCase(0f)]
+        [TestCase(-4f)]
+        [TestCase(float.NaN)]
+        [TestCase(float.PositiveInfinity)]
+        [TestCase(float.NegativeInfinity)]
+        public void CalculateAspect_WithInvalidDimension_ReturnsDefaultAspect(float invalidDimension) {
+            float expected = CameraScalerMath.kDefaultReferenceWidth / CameraScalerMath.kDefaultReferenceHeight;
+
+            Assert.That(CameraScalerMath.CalculateAspect(new Vector2(invalidDimension, 1280f)),
+                Is.EqualTo(expected).Within(0.0001f));
+            Assert.That(CameraScalerMath.CalculateAspect(new Vector2(720f, invalidDimension)),
+                Is.EqualTo(expected).Within(0.0001f));
+        }
+
+        [TestCase(720f, 1280f, 0.5625f)]
+        [TestCase(1920f, 1080f, 16f / 9f)]
+        [TestCase(1f, 1f, 1f)]
+        [TestCase(float.Epsilon, float.MaxValue, CameraScalerMath.kMinimumAspect)]
+        [TestCase(float.MaxValue, float.Epsilon, CameraScalerMath.kMaximumAspect)]
+        public void CalculateAspect_WithValidDimensions_ReturnsClampedRatio(float width, float height, float expected) {
+            Assert.That(CameraScalerMath.CalculateAspect(new Vector2(width, height)),
+                Is.EqualTo(expected).Within(0.0001f));
         }
     }
 }

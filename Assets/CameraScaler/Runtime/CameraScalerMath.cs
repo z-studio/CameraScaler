@@ -5,14 +5,14 @@ namespace ZStudio.CameraScaler {
     /// Camera Scaler 的纯计算逻辑，不依赖 MonoBehaviour 生命周期。
     /// </summary>
     public static class CameraScalerMath {
-        public const float DefaultReferenceWidth = 720f;
-        public const float DefaultReferenceHeight = 1280f;
-        public const float DefaultOrthographicSize = 5f;
-        public const float DefaultFieldOfView = 60f;
-        public const float MinimumFieldOfView = 1f;
-        public const float MaximumFieldOfView = 179f;
-        public const float MinimumAspect = 0.01f;
-        public const float MaximumAspect = 100f;
+        public const float kDefaultReferenceWidth = 720f;
+        public const float kDefaultReferenceHeight = 1280f;
+        public const float kDefaultOrthographicSize = 5f;
+        public const float kDefaultFieldOfView = 60f;
+        public const float kMinimumFieldOfView = 1f;
+        public const float kMaximumFieldOfView = 179f;
+        public const float kMinimumAspect = 0.01f;
+        public const float kMaximumAspect = 100f;
 
         /// <summary>按适配模式计算正交相机的垂直半尺寸。</summary>
         public static float CalculateOrthographicSize(
@@ -23,7 +23,7 @@ namespace ZStudio.CameraScaler {
             float matchWidthOrHeight,
             float zoom
         ) {
-            float safeReferenceAspect = GetSafeAspect(referenceAspect, DefaultReferenceWidth / DefaultReferenceHeight);
+            float safeReferenceAspect = GetSafeAspect(referenceAspect, kDefaultReferenceWidth / kDefaultReferenceHeight);
             float safeCurrentAspect = GetSafeAspect(currentAspect, safeReferenceAspect);
             float constantHeightSize = SanitizeOrthographicSize(referenceSize);
             float constantWidthSize = constantHeightSize * (safeReferenceAspect / safeCurrentAspect);
@@ -40,7 +40,7 @@ namespace ZStudio.CameraScaler {
             float matchWidthOrHeight,
             float zoom
         ) {
-            float safeReferenceAspect = GetSafeAspect(referenceAspect, DefaultReferenceWidth / DefaultReferenceHeight);
+            float safeReferenceAspect = GetSafeAspect(referenceAspect, kDefaultReferenceWidth / kDefaultReferenceHeight);
             float safeCurrentAspect = GetSafeAspect(currentAspect, safeReferenceAspect);
             float safeReferenceFov = SanitizeFieldOfView(referenceVerticalFov);
             float horizontalFov = CalcHorizontalFov(safeReferenceFov, safeReferenceAspect);
@@ -102,11 +102,11 @@ namespace ZStudio.CameraScaler {
 
         public static float ProjectionScaleToFov(float projectionScale) {
             if (!IsFinitePositive(projectionScale)) {
-                return MinimumFieldOfView;
+                return kMinimumFieldOfView;
             }
 
             float fov = 2f * Mathf.Atan(projectionScale) * Mathf.Rad2Deg;
-            return Mathf.Clamp(fov, MinimumFieldOfView, MaximumFieldOfView);
+            return Mathf.Clamp(fov, kMinimumFieldOfView, kMaximumFieldOfView);
         }
 
         public static Vector2 SanitizeReferenceResolution(Vector2 resolution) {
@@ -118,14 +118,12 @@ namespace ZStudio.CameraScaler {
         }
 
         public static float CalculateAspect(Vector2 resolution) {
-            Vector2 sanitized = SanitizeReferenceResolution(resolution);
-            double aspect = (double)sanitized.x / sanitized.y;
-
-            if (double.IsNaN(aspect) || double.IsInfinity(aspect) || aspect <= 0d) {
-                return DefaultReferenceWidth / DefaultReferenceHeight;
+            if (!IsFinitePositive(resolution.x) || !IsFinitePositive(resolution.y)) {
+                return kDefaultReferenceWidth / kDefaultReferenceHeight;
             }
 
-            return Mathf.Clamp((float)aspect, MinimumAspect, MaximumAspect);
+            double aspect = (double)resolution.x / resolution.y;
+            return Mathf.Clamp((float)aspect, kMinimumAspect, kMaximumAspect);
         }
 
         public static float SanitizeMatch(float value) {
@@ -134,12 +132,12 @@ namespace ZStudio.CameraScaler {
 
         public static float SanitizeFieldOfView(float value) {
             return IsFinite(value)
-                ? Mathf.Clamp(value, MinimumFieldOfView, MaximumFieldOfView)
-                : DefaultFieldOfView;
+                ? Mathf.Clamp(value, kMinimumFieldOfView, kMaximumFieldOfView)
+                : kDefaultFieldOfView;
         }
 
         public static float SanitizeOrthographicSize(float value) {
-            return IsFinitePositive(value) ? value : DefaultOrthographicSize;
+            return IsFinitePositive(value) ? value : kDefaultOrthographicSize;
         }
 
         public static float SanitizeZoom(float value) {
@@ -148,7 +146,7 @@ namespace ZStudio.CameraScaler {
 
         public static float GetSafeAspect(float aspect, float fallbackAspect) {
             return IsFinitePositive(aspect)
-                ? Mathf.Clamp(aspect, MinimumAspect, MaximumAspect)
+                ? Mathf.Clamp(aspect, kMinimumAspect, kMaximumAspect)
                 : fallbackAspect;
         }
 

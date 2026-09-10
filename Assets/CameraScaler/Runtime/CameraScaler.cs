@@ -21,8 +21,8 @@ namespace ZStudio.CameraScaler {
         [Tooltip("设计内容时使用的参考分辨率，宽和高必须大于 0。")]
         [SerializeField]
         private Vector2 m_ReferenceResolution = new(
-            CameraScalerMath.DefaultReferenceWidth,
-            CameraScalerMath.DefaultReferenceHeight
+            CameraScalerMath.kDefaultReferenceWidth,
+            CameraScalerMath.kDefaultReferenceHeight
         );
 
         /// <summary>屏幕宽高比变化时采用的相机适配策略。</summary>
@@ -39,13 +39,13 @@ namespace ZStudio.CameraScaler {
         /// <summary>参考分辨率下的正交相机垂直半尺寸。</summary>
         [Tooltip("参考分辨率下的正交相机垂直半尺寸。运行时以此为基准，而不是 Camera 上的当前 Size。")]
         [SerializeField]
-        private float m_ReferenceOrthographicSize = CameraScalerMath.DefaultOrthographicSize;
+        private float m_ReferenceOrthographicSize = CameraScalerMath.kDefaultOrthographicSize;
 
         /// <summary>参考分辨率下的透视相机垂直视野角。</summary>
         [Tooltip("参考分辨率下的透视相机垂直视野角。运行时以此为基准，而不是 Camera 上的当前 FOV。")]
         [Range(1f, 179f)]
         [SerializeField]
-        private float m_ReferenceFieldOfView = CameraScalerMath.DefaultFieldOfView;
+        private float m_ReferenceFieldOfView = CameraScalerMath.kDefaultFieldOfView;
 
         /// <summary>相对于基准投影视野的缩放倍率。</summary>
         [Tooltip("相对于基准投影视野的缩放倍率。1 表示原始视野，大于 1 表示放大。")]
