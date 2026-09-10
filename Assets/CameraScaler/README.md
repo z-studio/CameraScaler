@@ -81,6 +81,7 @@ public sealed class CameraController : MonoBehaviour {
 - `ReferenceFieldOfView`：参考分辨率下的透视垂直视野角。
 - `CameraZoom`：缩放倍率，必须是大于 `0` 的有限值；非法输入会被拒绝。可在 Inspector 中序列化。
 - `ApplyTiming`：将结果写入 Camera 的时机（`EApplyTiming.Update` / `LateUpdate` / `OnPreCull`）。
+- `PreviewInEditMode`：编辑模式自动预览开关，默认关闭，不影响运行时适配。
 - `HorizontalSize`：参考分辨率下、未应用 Zoom 的正交水平半尺寸。
 - `HorizontalFov`：参考分辨率下、未应用 Zoom 的水平视野角。
 - `Refresh()`：外部直接修改 Camera 配置后，强制重新应用适配。不会重新采集基准。
@@ -104,12 +105,18 @@ Camera Scaler 会接管以下属性：
 
 ## 生命周期和动态变化
 
-- Play Mode 下首次适配在 `OnEnable` 完成，因此其他组件可在 `Start` 中读取适配后的相机。Edit Mode 只保存基准，不改 Camera。
+- Play Mode 下首次适配在 `OnEnable` 完成，因此其他组件可在 `Start` 中读取适配后的相机。Edit Mode 默认不自动适配；开启 `Preview In Edit Mode` 后可实时预览。
 - 屏幕宽高比、工作模式、Match 权重、参考分辨率、参考 Size/FOV、Zoom 以及正交/透视切换都会自动触发刷新。
 - 在 Camera Scaler 自身初始化之前设置公开属性是安全的；配置会在启用时应用。
 - Unity 对象不是线程安全的，所有 API 必须在主线程调用。
 - 禁用组件期间修改 Camera 后，重新启用组件会重新应用适配。
 - 同一物体不能挂多个 Camera Scaler。
+
+## 编辑模式预览
+
+在 Inspector 勾选 `Preview In Edit Mode`，或设置 `PreviewInEditMode = true`，即可在不点击 Play 时预览适配。修改 Game 窗口比例、适配参数或相机投影类型都会自动刷新，无需保持选中组件，也不受 `Apply Timing` 影响。
+
+关闭预览、禁用或移除组件时，会恢复预览前的 Camera Size/FOV。保存场景和进入 Play 前也会恢复，避免将预览结果保存为设计参数；返回编辑模式后继续预览。参考 Size/FOV 始终作为计算基准，不会随预览反复改变。预览期间调用 `RecaptureBaseline()` 会先恢复原相机参数，再采集并恢复预览；如需采集手动调整的 Camera 参数，请先关闭预览。
 
 ## 参数保护
 

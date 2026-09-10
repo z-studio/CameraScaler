@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
@@ -255,6 +256,140 @@ namespace ZStudio.CameraScaler.Tests.Editor {
                 1f
             );
             Assert.That(m_Camera.fieldOfView, Is.EqualTo(expected).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator EditPreview_DefaultDisabled_DoesNotTrackAspect() {
+            CreateScaler(true, 1f, 5f, 60f);
+            m_Scaler.ReferenceResolution = Vector2.one;
+            Assert.That(m_Scaler.PreviewInEditMode, Is.False);
+            m_Camera.aspect = 0.5f;
+
+            yield return null;
+            yield return null;
+
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(5f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator EditPreview_TracksAspectProjectionAndSerializedSettings() {
+            CreateScaler(true, 1f, 5f, 60f);
+            m_Scaler.ReferenceResolution = Vector2.one;
+            m_Scaler.ApplyTiming = EApplyTiming.OnPreCull;
+            m_Scaler.PreviewInEditMode = true;
+            m_Camera.aspect = 0.5f;
+
+            yield return null;
+            yield return null;
+
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(10f).Within(0.0001f));
+            m_Camera.orthographic = false;
+            yield return null;
+            yield return null;
+
+            Assert.That(m_Camera.fieldOfView,
+                Is.EqualTo(Camera.HorizontalToVerticalFieldOfView(60f, 0.5f)).Within(0.0001f));
+
+            var serialized = new UnityEditor.SerializedObject(m_Scaler);
+            serialized.FindProperty("m_ReferenceFieldOfView").floatValue = 90f;
+            serialized.ApplyModifiedProperties();
+            yield return null;
+            yield return null;
+
+            Assert.That(m_Camera.fieldOfView,
+                Is.EqualTo(Camera.HorizontalToVerticalFieldOfView(90f, 0.5f)).Within(0.0001f));
+            m_Scaler.PreviewInEditMode = false;
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(5f).Within(0.0001f));
+            Assert.That(m_Camera.fieldOfView, Is.EqualTo(60f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator EditPreview_DisableAndReenable_RestoresAndResumes() {
+            CreateScaler(true, 1f, 5f, 60f);
+            m_Scaler.ReferenceResolution = Vector2.one;
+            m_Scaler.PreviewInEditMode = true;
+            m_Scaler.CameraZoom = 2f;
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+
+            m_Scaler.enabled = false;
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(5f).Within(0.0001f));
+            m_Camera.aspect = 0.5f;
+            m_Scaler.CameraZoom = 4f;
+            yield return null;
+            yield return null;
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(5f).Within(0.0001f));
+
+            m_Scaler.enabled = true;
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+            m_Scaler.PreviewInEditMode = false;
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(5f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator EditPreview_Recapture_DoesNotCaptureAdaptedValues() {
+            CreateScaler(true, 1f, 5f, 60f);
+            m_Scaler.ReferenceResolution = Vector2.one;
+            m_Scaler.PreviewInEditMode = true;
+            m_Scaler.CameraZoom = 2f;
+            m_Scaler.RecaptureBaseline();
+            yield return null;
+            yield return null;
+
+            Assert.That(m_Scaler.ReferenceOrthographicSize, Is.EqualTo(5f).Within(0.0001f));
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+            Object.DestroyImmediate(m_Scaler);
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(5f).Within(0.0001f));
+        }
+
+        [UnityTest]
+        public IEnumerator EditPreview_SaveScene_PreservesOriginalCameraValues() {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            string path = "Assets/CameraScalerPreviewTest-" + System.Guid.NewGuid().ToString("N") + ".unity";
+            try {
+                CreateScaler(true, 1f, 5f, 60f);
+                m_Scaler.ScaleMode = EScaleMode.ConstantHeight;
+                m_Camera.orthographicSize = 7f;
+                m_Scaler.PreviewInEditMode = true;
+                m_Scaler.CameraZoom = 2f;
+                Assert.That(m_Camera.orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+
+                Assert.That(UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene, path, true), Is.True);
+                Assert.That(System.IO.File.ReadAllText(path), Does.Contain("orthographic size: 7"));
+                yield return null;
+                yield return null;
+                Assert.That(m_Camera.orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+                m_Scaler.PreviewInEditMode = false;
+                Assert.That(m_Camera.orthographicSize, Is.EqualTo(7f).Within(0.0001f));
+            } finally {
+                UnityEditor.AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EditPreview_PlayModeRoundTrip_PreservesBaselineAndOriginalCamera() {
+            CreateScaler(true, 1f, 5f, 60f);
+            m_Scaler.ScaleMode = EScaleMode.ConstantHeight;
+            m_Camera.orthographicSize = 7f;
+            m_Scaler.PreviewInEditMode = true;
+            m_Scaler.CameraZoom = 2f;
+
+            yield return new UnityEngine.TestTools.EnterPlayMode();
+            var playingScaler = GameObject.Find("CameraScaler Test").GetComponent<CameraScaler>();
+            Assert.That(playingScaler.GetComponent<Camera>().orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+            Assert.That(playingScaler.ReferenceOrthographicSize, Is.EqualTo(5f).Within(0.0001f));
+            playingScaler.PreviewInEditMode = false;
+            Assert.That(playingScaler.GetComponent<Camera>().orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+
+            yield return new UnityEngine.TestTools.ExitPlayMode();
+            yield return null;
+            yield return null;
+            m_GameObject = GameObject.Find("CameraScaler Test");
+            m_Scaler = m_GameObject.GetComponent<CameraScaler>();
+            m_Camera = m_GameObject.GetComponent<Camera>();
+            Assert.That(m_Scaler.PreviewInEditMode, Is.True);
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(2.5f).Within(0.0001f));
+            m_Scaler.PreviewInEditMode = false;
+            Assert.That(m_Camera.orthographicSize, Is.EqualTo(7f).Within(0.0001f));
         }
 
         private void CreateScaler(bool orthographic, float aspect, float size, float fov) {

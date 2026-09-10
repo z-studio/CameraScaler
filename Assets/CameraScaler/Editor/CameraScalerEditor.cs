@@ -12,6 +12,7 @@ namespace ZStudio.CameraScaler.Editor {
         private SerializedProperty m_ReferenceFieldOfView;
         private SerializedProperty m_CameraZoom;
         private SerializedProperty m_ApplyTiming;
+        private SerializedProperty m_PreviewInEditMode;
         private GUIStyle m_RightAlignedLabel;
 
         private void OnEnable() {
@@ -22,6 +23,7 @@ namespace ZStudio.CameraScaler.Editor {
             m_ReferenceFieldOfView = serializedObject.FindProperty(nameof(m_ReferenceFieldOfView));
             m_CameraZoom = serializedObject.FindProperty(nameof(m_CameraZoom));
             m_ApplyTiming = serializedObject.FindProperty(nameof(m_ApplyTiming));
+            m_PreviewInEditMode = serializedObject.FindProperty(nameof(m_PreviewInEditMode));
             m_RightAlignedLabel = new GUIStyle(EditorStyles.label) { alignment = TextAnchor.MiddleRight };
         }
 
@@ -76,6 +78,7 @@ namespace ZStudio.CameraScaler.Editor {
             EditorGUILayout.PropertyField(m_ReferenceFieldOfView);
             EditorGUILayout.PropertyField(m_CameraZoom);
             EditorGUILayout.PropertyField(m_ApplyTiming);
+            EditorGUILayout.PropertyField(m_PreviewInEditMode);
 
             DrawCameraWarnings();
             serializedObject.ApplyModifiedProperties();
@@ -106,7 +109,7 @@ namespace ZStudio.CameraScaler.Editor {
                 );
             }
 
-            if (Application.isPlaying) {
+            if (Application.isPlaying || scaler.PreviewInEditMode) {
                 return;
             }
 

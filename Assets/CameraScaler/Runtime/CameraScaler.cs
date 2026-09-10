@@ -12,6 +12,7 @@ namespace ZStudio.CameraScaler {
     /// </remarks>
     [AddComponentMenu("Layout/ZStudio/Camera Scaler")]
     [RequireComponent(typeof(Camera))]
+    [ExecuteAlways]
     [DisallowMultipleComponent]
     [DefaultExecutionOrder(-100)]
     public sealed class CameraScaler : MonoBehaviour {
@@ -57,6 +58,16 @@ namespace ZStudio.CameraScaler {
         [Tooltip("将适配结果写入 Camera 的时机。与 Cinemachine 等系统冲突时，可改为 Late Update 或 On Pre Cull。")]
         [SerializeField]
         private EApplyTiming m_ApplyTiming = EApplyTiming.Update;
+
+        [Tooltip("在编辑模式下预览适配效果；关闭预览或禁用组件时恢复原相机参数。")]
+        [SerializeField]
+        private bool m_PreviewInEditMode;
+
+#if UNITY_EDITOR
+        private bool m_HasPreviewSnapshot;
+        private float m_PreviewOriginalSize;
+        private float m_PreviewOriginalFov;
+#endif
 
         [SerializeField, HideInInspector]
         private int m_SerializedVersion;
@@ -213,6 +224,17 @@ namespace ZStudio.CameraScaler {
             }
         }
 
+        /// <summary>是否在编辑模式自动预览适配。默认关闭，不影响运行时适配。</summary>
+        public bool PreviewInEditMode {
+            get => m_PreviewInEditMode;
+            set {
+                m_PreviewInEditMode = value;
+#if UNITY_EDITOR
+                UpdateEditorPreview();
+#endif
+            }
+        }
+
         /// <summary>缓存参考数据，首次适配改由 OnEnable 完成，避免与 OnEnable 重复写入。</summary>
         private void Awake() {
             EnsureInitialized();
@@ -221,37 +243,109 @@ namespace ZStudio.CameraScaler {
         /// <summary>Play Mode 下启用后立即应用适配，供其他脚本在 Start 中读取。</summary>
         private void OnEnable() {
             EnsureInitialized();
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.update -= UpdateEditorPreview;
+            UnityEditor.EditorApplication.update += UpdateEditorPreview;
+            UnityEditor.EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            UnityEditor.EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaving -= OnSceneSaving;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaving += OnSceneSaving;
+            UpdateEditorPreview();
+#endif
 
-            if (Application.isPlaying) {
+            if (Application.IsPlaying(gameObject)) {
                 RefreshCamera(true);
             }
         }
 
         /// <summary>仅在影响适配结果的输入发生变化时重新计算相机参数。</summary>
         private void Update() {
-            if (m_ApplyTiming == EApplyTiming.Update) {
+            if (Application.IsPlaying(gameObject) && m_ApplyTiming == EApplyTiming.Update) {
                 RefreshCamera(false);
             }
         }
 
         private void LateUpdate() {
-            if (m_ApplyTiming == EApplyTiming.LateUpdate) {
+            if (Application.IsPlaying(gameObject) && m_ApplyTiming == EApplyTiming.LateUpdate) {
                 RefreshCamera(false);
             }
         }
 
         private void OnPreCull() {
-            if (m_ApplyTiming == EApplyTiming.OnPreCull) {
+            if (Application.IsPlaying(gameObject) && m_ApplyTiming == EApplyTiming.OnPreCull) {
                 RefreshCamera(false);
             }
         }
+
+        private void OnDisable() {
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.update -= UpdateEditorPreview;
+            UnityEditor.EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaving -= OnSceneSaving;
+            RestoreEditorPreview();
+#endif
+        }
+
+#if UNITY_EDITOR
+        private void OnSceneSaving(UnityEngine.SceneManagement.Scene scene, string path) {
+            if (gameObject.scene == scene) {
+                RestoreEditorPreview();
+            }
+        }
+
+        private void OnPlayModeStateChanged(UnityEditor.PlayModeStateChange state) {
+            if (state == UnityEditor.PlayModeStateChange.ExitingEditMode) {
+                RestoreEditorPreview();
+            } else if (state == UnityEditor.PlayModeStateChange.EnteredEditMode) {
+                UpdateEditorPreview();
+            }
+        }
+
+        private void UpdateEditorPreview() {
+            if (Application.isPlaying || UnityEditor.EditorApplication.isPlayingOrWillChangePlaymode) {
+                return;
+            }
+
+            if (!m_PreviewInEditMode || !isActiveAndEnabled) {
+                RestoreEditorPreview();
+                return;
+            }
+
+            EnsureInitialized();
+            float previousSize = m_ComponentCamera.orthographicSize;
+            float previousFov = m_ComponentCamera.fieldOfView;
+            RefreshCamera(false);
+
+            if (!Mathf.Approximately(previousSize, m_ComponentCamera.orthographicSize)
+                || !Mathf.Approximately(previousFov, m_ComponentCamera.fieldOfView)) {
+                UnityEditor.EditorApplication.QueuePlayerLoopUpdate();
+                UnityEditor.SceneView.RepaintAll();
+            }
+        }
+
+        private void RestoreEditorPreview() {
+            if (!m_HasPreviewSnapshot) {
+                return;
+            }
+
+            if (m_ComponentCamera != null) {
+                m_ComponentCamera.orthographicSize = m_PreviewOriginalSize;
+                m_ComponentCamera.fieldOfView = m_PreviewOriginalFov;
+            }
+
+            m_HasPreviewSnapshot = false;
+            m_HasApplied = false;
+            UnityEditor.EditorApplication.QueuePlayerLoopUpdate();
+            UnityEditor.SceneView.RepaintAll();
+        }
+#endif
 
         /// <summary>在 Inspector 修改数据时立即修正非法序列化值。</summary>
         private void OnValidate() {
             SanitizeSerializedFields();
             TryMigrateBaselineFromCamera();
 
-            if (Application.isPlaying && isActiveAndEnabled) {
+            if (Application.IsPlaying(gameObject) && isActiveAndEnabled) {
                 EnsureInitialized();
                 RefreshCamera(true);
             }
@@ -275,9 +369,14 @@ namespace ZStudio.CameraScaler {
         /// <summary>
         /// 把 Camera 当前的 Size/FOV 采集为新的设计基准。
         /// 应在 Camera 已经处于「参考分辨率下的目标观感」时调用。
-        /// Play Mode 下采集后会立即重新应用适配；Edit Mode 只更新基准字段。
+        /// 预览期间先恢复原相机参数再采集，避免使用适配后的结果；预览会在下一次编辑器更新时恢复。
         /// </summary>
         public void RecaptureBaseline() {
+#if UNITY_EDITOR
+
+            // 先恢复设计值，避免把已适配的预览结果重新采集为基准。
+            RestoreEditorPreview();
+#endif
             if (m_ComponentCamera == null) {
                 m_ComponentCamera = GetComponent<Camera>();
             }
@@ -287,7 +386,7 @@ namespace ZStudio.CameraScaler {
             UpdateReferenceData();
             m_IsInitialized = true;
 
-            if (Application.isPlaying && isActiveAndEnabled) {
+            if (Application.IsPlaying(gameObject) && isActiveAndEnabled) {
                 RefreshCamera(true);
             }
         }
@@ -315,22 +414,36 @@ namespace ZStudio.CameraScaler {
                 return;
             }
 
+#if UNITY_EDITOR
+            if (!Application.isPlaying && m_PreviewInEditMode) {
+                if (!isActiveAndEnabled || UnityEditor.EditorApplication.isPlayingOrWillChangePlaymode) {
+                    return;
+                }
+
+                if (!m_HasPreviewSnapshot) {
+                    m_PreviewOriginalSize = m_ComponentCamera.orthographicSize;
+                    m_PreviewOriginalFov = m_ComponentCamera.fieldOfView;
+                    m_HasPreviewSnapshot = true;
+                    force = true;
+                }
+            }
+#endif
             SanitizeSerializedFields();
             float currentAspect = CameraScalerMath.GetSafeAspect(m_ComponentCamera.aspect, m_TargetAspect);
 
             bool baselineChanged =
-                !CameraScalerMath.Approximately(m_PreviousReferenceResolution, m_ReferenceResolution) ||
-                !Mathf.Approximately(m_PreviousReferenceSize, m_ReferenceOrthographicSize) ||
-                !Mathf.Approximately(m_PreviousReferenceFov, m_ReferenceFieldOfView);
+                !CameraScalerMath.Approximately(m_PreviousReferenceResolution, m_ReferenceResolution)
+                || !Mathf.Approximately(m_PreviousReferenceSize, m_ReferenceOrthographicSize)
+                || !Mathf.Approximately(m_PreviousReferenceFov, m_ReferenceFieldOfView);
 
-            if (!force &&
-                m_HasApplied &&
-                !baselineChanged &&
-                Mathf.Approximately(m_PreviousUpdateAspect, currentAspect) &&
-                m_PreviousUpdateMode == m_ScaleMode &&
-                Mathf.Approximately(m_PreviousUpdateMatch, m_MatchWidthOrHeight) &&
-                Mathf.Approximately(m_PreviousCameraZoom, m_CameraZoom) &&
-                m_PreviousOrthographic == m_ComponentCamera.orthographic) {
+            if (!force
+                && m_HasApplied
+                && !baselineChanged
+                && Mathf.Approximately(m_PreviousUpdateAspect, currentAspect)
+                && m_PreviousUpdateMode == m_ScaleMode
+                && Mathf.Approximately(m_PreviousUpdateMatch, m_MatchWidthOrHeight)
+                && Mathf.Approximately(m_PreviousCameraZoom, m_CameraZoom)
+                && m_PreviousOrthographic == m_ComponentCamera.orthographic) {
                 return;
             }
 
